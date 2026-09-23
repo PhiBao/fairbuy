@@ -1,6 +1,6 @@
 # FairBuy — never overpay for stocks on Solana
 
-**Live demo:** https://fairbuy-stocklana.fly.dev/ ·
+**Live demo:** https://fairbuy-stocklana.fly.dev/ (backup: https://fairbuy.vercel.app/) ·
 **Repo:** https://github.com/PhiBao/fairbuy ·
 **Hackathon:** Stocklana — Main track + PreStocks bounty · submissions close Sep 25 2026, 4pm ET
 
