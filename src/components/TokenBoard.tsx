@@ -51,7 +51,7 @@ export default function TokenBoard({
           <button
             key={r.symbol}
             onClick={() => onSelect(r.symbol)}
-            className={`text-left rounded-xl border p-3 transition hover:border-zinc-500 ${
+            className={`text-left text-zinc-100 rounded-xl border p-3 transition hover:border-zinc-500 ${
               selected === r.symbol ? "border-emerald-400/70 bg-zinc-800/80" : "border-zinc-800 bg-zinc-900"
             }`}
           >
