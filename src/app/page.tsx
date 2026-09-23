@@ -266,9 +266,9 @@ export default function Home() {
       </div>
 
       <footer className="text-[11px] text-zinc-600 pt-2">
-        FairBuy composes PreStocks marks, Pyth feed-registry session data, Jupiter routing, Yahoo underlying
-        reference (Pyth Pro-ready feed IDs), and Nansen TGM aggregates (redistribution-allowed endpoints,
-        transformed). No custody — you sign every fill. Marks are issuer references, not oracles.
+        FairBuy composes PreStocks marks, Pyth registry session data, Jupiter routing, and Nansen
+        TGM aggregates (redistribution-allowed endpoints, transformed). No custody — you sign every
+        fill. Marks are issuer references, not oracles.
       </footer>
     </main>
   );
