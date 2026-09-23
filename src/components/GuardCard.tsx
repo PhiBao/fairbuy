@@ -12,6 +12,7 @@ import { explorerTxUrl } from "@/lib/solana";
 export interface GuardInput {
   symbol: string;
   mint: string;
+  decimals: number;
   dexPrice: number;
   markPrice: number | null;
   marksLive: boolean;
@@ -46,7 +47,15 @@ const OPTION_LABEL: Record<Verdict["choice"], string> = {
   skip_thin: "Skip — thin",
 };
 
-export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: (a: AttemptDraft) => void }) {
+export default function GuardCard({
+  g,
+  onAttempt,
+  onArmAlert,
+}: {
+  g: GuardInput;
+  onAttempt: (a: AttemptDraft) => void;
+  onArmAlert: (symbol: string) => void;
+}) {
   const { connection } = useConnection();
   const { publicKey, signTransaction, connected } = useWallet();
   const [amountUsd, setAmountUsd] = useState(100);
@@ -57,6 +66,7 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [twapN, setTwapN] = useState(3);
+  const [armed, setArmed] = useState(false);
 
   const premium = useMemo(
     () => (g.markPrice !== null ? Math.round(calcPremium(g.dexPrice, g.markPrice)) : NaN),
@@ -137,10 +147,11 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
 
   const fairPrice = g.markPrice !== null ? fairLimitPrice(g.markPrice, g.maxPremiumBps) : null;
   const savedEst = policy.savedUsdEstimate(amountUsd);
+  const blocked = policy.decision === "BLOCK";
+  const outOfBand = blocked || policy.decision === "FAIR_LIMIT";
+  const fillAllowed = policy.decision === "OK" || policy.decision === "WARN";
 
-  async function execute(mode: "market" | "fairlimit") {
-    setStatus(null);
-    setReceipt(null);
+  function logBlock() {
     const draft: AttemptDraft = {
       symbol: g.symbol,
       amountUsd,
@@ -151,17 +162,22 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
       savedUsd: policy.decision === "BLOCK" ? savedEst : 0,
       offHours: g.offHours,
     };
-    if (policy.decision === "BLOCK") {
-      onAttempt(draft);
-      setReceipt({ ...draft, fairPrice });
-      setStatus("⛔ BLOCKED — the guard refused this fill. Estimate logged to the ledger.");
-      return;
-    }
-    if (mode === "fairlimit" && isFinite(premium) && premium > g.maxPremiumBps) {
-      const blocked: AttemptDraft = { ...draft, decision: "FAIR_LIMIT", savedUsd: savedEst };
-      onAttempt(blocked);
-      setReceipt({ ...blocked, fairPrice });
-      setStatus("Fair-Limit not met at this price — no fill. Set an alert instead.");
+    onAttempt(draft);
+    setReceipt({ ...draft, fairPrice });
+  }
+
+  // Market fill — only reachable when the policy allows it. This is a real
+  // Jupiter-routed swap at the live quote, not a resting order.
+  async function executeMarket() {
+    setStatus(null);
+    setReceipt(null);
+    if (!fillAllowed) {
+      logBlock();
+      setStatus(
+        blocked
+          ? "⛔ BLOCKED — the guard refused this fill. Estimate logged to the ledger."
+          : "Premium left your band — no fill. Arm an alert instead."
+      );
       return;
     }
     if (!connected || !publicKey || !signTransaction) {
@@ -186,10 +202,20 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
       const signed = await signTransaction(tx);
       const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
       await connection.confirmTransaction(sig, "confirmed");
-      const done: AttemptDraft = { ...draft, txSig: sig, savedUsd: 0 };
+      const done: AttemptDraft = {
+        symbol: g.symbol,
+        amountUsd,
+        dexPrice: g.dexPrice,
+        markPrice: g.markPrice,
+        premiumBps: isFinite(premium) ? premium : 0,
+        decision: policy.decision,
+        txSig: sig,
+        savedUsd: 0,
+        offHours: g.offHours,
+      };
       onAttempt(done);
       setReceipt({ ...done, fairPrice });
-      setStatus("✓ Filled — receipt verified on Solana.");
+      setStatus("✓ Filled at the live quote — receipt verified on Solana.");
     } catch (e) {
       setStatus(`Execution failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}`);
     } finally {
@@ -197,19 +223,27 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
     }
   }
 
-  const blocked = policy.decision === "BLOCK";
+  function armAlert() {
+    onArmAlert(g.symbol);
+    setArmed(true);
+    if (outOfBand) logBlock();
+    setStatus(
+      `✓ Alert armed for ${g.symbol} — you'll be flagged the moment it re-enters your +${(g.maxPremiumBps / 100).toFixed(0)}% band.`
+    );
+  }
 
-  // TWAP-at-fair: N equal slices, each re-quoted and re-checked against the
-  // fair band right before signing. Any slice failing the check halts the schedule.
+  // TWAP-at-fair: N equal slices. EACH slice is re-quoted and its IMPLIED
+  // price (from that slice's own outAmount) is band-checked before signing.
+  // Any slice failing the check halts the schedule. Only offered in-band.
   async function executeTwap() {
     setStatus(null);
     setReceipt(null);
-    if (!connected || !publicKey || !signTransaction) {
-      setStatus("Connect a wallet to execute.");
+    if (!fillAllowed || !g.markPrice) {
+      setStatus("TWAP only runs inside your fair band.");
       return;
     }
-    if (policy.decision === "BLOCK" || !g.markPrice) {
-      setStatus("TWAP unavailable while blocked or without a fair reference.");
+    if (!connected || !publicKey || !signTransaction) {
+      setStatus("Connect a wallet to execute.");
       return;
     }
     const n = Math.min(10, Math.max(2, Math.floor(twapN)));
@@ -227,9 +261,17 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
           setStatus(`Slice ${i + 1}/${n}: no route — TWAP halted after ${filled} fills.`);
           break;
         }
-        const premNow = Math.round(calcPremium(g.dexPrice, g.markPrice));
+        const outTokens = Number(qj.outAmount) / 10 ** g.decimals;
+        if (!outTokens || outTokens <= 0) {
+          setStatus(`Slice ${i + 1}/${n}: empty route — TWAP halted after ${filled} fills.`);
+          break;
+        }
+        const implied = sliceUsd / outTokens;
+        const premNow = Math.round(calcPremium(implied, g.markPrice));
         if (!isFinite(premNow) || premNow > g.maxPremiumBps) {
-          setStatus(`Slice ${i + 1}/${n}: premium +${(premNow / 100).toFixed(1)}% left the band — TWAP halted after ${filled} fills.`);
+          setStatus(
+            `Slice ${i + 1}/${n}: fresh quote implies +${(premNow / 100).toFixed(1)}% — outside band, TWAP halted after ${filled} fills.`
+          );
           break;
         }
         const sw = await fetch("/api/swap", {
@@ -248,7 +290,7 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
         onAttempt({
           symbol: g.symbol,
           amountUsd: sliceUsd,
-          dexPrice: g.dexPrice,
+          dexPrice: implied,
           markPrice: g.markPrice,
           premiumBps: premNow,
           decision: "FAIR_LIMIT",
@@ -256,10 +298,15 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
           savedUsd: 0,
           offHours: g.offHours,
         });
-        setStatus(`TWAP: slice ${filled}/${n} filled…`);
+        setStatus(`TWAP: slice ${filled}/${n} filled @ $${implied.toFixed(2)}…`);
       }
-      setStatus(`TWAP done: ${filled}/${n} slices filled at fair. Each fill logged to the ledger.`);
-      if (lastSig) setReceipt({ symbol: g.symbol, amountUsd, dexPrice: g.dexPrice, markPrice: g.markPrice, premiumBps: premium, decision: "FAIR_LIMIT", txSig: lastSig, savedUsd: 0, offHours: g.offHours, fairPrice });
+      setStatus(`TWAP done: ${filled}/${n} slices filled inside the band. Each fill logged to the ledger.`);
+      if (lastSig)
+        setReceipt({
+          symbol: g.symbol, amountUsd, dexPrice: g.dexPrice, markPrice: g.markPrice,
+          premiumBps: premium, decision: "FAIR_LIMIT", txSig: lastSig, savedUsd: 0,
+          offHours: g.offHours, fairPrice,
+        });
     } catch (e) {
       setStatus(`TWAP stopped: ${e instanceof Error ? e.message.slice(0, 160) : String(e)} (${filled}/${n} filled)`);
     } finally {
@@ -355,25 +402,31 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
 
       {!connected ? (
         <WalletMultiButton />
+      ) : outOfBand ? (
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={armAlert}
+            className="w-full rounded-xl py-2.5 text-sm font-semibold bg-amber-400/10 border border-amber-400/40 text-amber-200 hover:bg-amber-400/20"
+          >
+            {armed ? `✓ Alert armed — flag me @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})` : `Arm alert @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})`}
+          </button>
+          <p className="text-[11px] text-zinc-500">
+            {blocked ? "Market buy is blocked this far outside your band." : "Premium is outside your band — no fill, no pretense."} FairBuy watches; you decide when it returns.
+          </p>
+        </div>
       ) : (
         <div className="flex flex-col sm:flex-row gap-2">
           <button
-            disabled={busy || blocked}
-            onClick={() => execute("market")}
+            disabled={busy}
+            onClick={executeMarket}
             className="flex-1 rounded-xl py-2.5 text-sm font-semibold bg-emerald-400/15 border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/25 disabled:opacity-40"
           >
-            {busy ? "Signing…" : blocked ? "Market buy — blocked" : `Guarded market buy $${amountUsd}`}
-          </button>
-          <button
-            disabled={busy || blocked}
-            onClick={() => execute("fairlimit")}
-            className="flex-1 rounded-xl py-2.5 text-sm font-semibold bg-amber-400/10 border border-amber-400/40 text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
-          >
-            {busy ? "Signing…" : `Fair-Limit buy @ ${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"}`}
+            {busy ? "Signing…" : `Buy now @ live quote ($${g.dexPrice.toFixed(2)})`}
           </button>
         </div>
       )}
-      {connected && !blocked && (
+
+      {connected && fillAllowed && (
         <div className="flex items-center gap-2 mt-2">
           <label className="text-[11px] text-zinc-500">TWAP slices</label>
           <input
@@ -389,7 +442,7 @@ export default function GuardCard({ g, onAttempt }: { g: GuardInput; onAttempt: 
             onClick={executeTwap}
             className="flex-1 rounded-xl py-2 text-xs font-semibold bg-sky-400/10 border border-sky-400/40 text-sky-200 hover:bg-sky-400/20 disabled:opacity-40"
           >
-            {busy ? "Filling slices…" : `TWAP ${Math.min(10, Math.max(2, Math.floor(twapN)))}× @ fair (re-checked per slice)`}
+            {busy ? "Filling slices…" : `TWAP ${Math.min(10, Math.max(2, Math.floor(twapN)))}× — each slice re-quoted + band-checked`}
           </button>
         </div>
       )}

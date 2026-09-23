@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TokenBoard, { type MarkRow } from "@/components/TokenBoard";
 import GuardCard, { type AttemptDraft, type GuardInput } from "@/components/GuardCard";
 import PythBadge, { type UnderlyingState } from "@/components/PythBadge";
@@ -33,22 +33,86 @@ function isOffHoursET(now = new Date()): boolean {
 
 const WATCH_KEY = "fairbuy-watch-v1";
 
+export interface ListedState {
+  dexPrice: number | null;
+  impactBps: number;
+  underlying: number | null;
+  divergenceBps: number | null;
+  live: boolean;
+}
+
+/** Headless reporter: polls dex probe + underlying for one listed token. */
+function ListedQuoteReporter({
+  symbol,
+  onUpdate,
+}: {
+  symbol: string;
+  onUpdate: (symbol: string, s: ListedState) => void;
+}) {
+  const cb = useRef(onUpdate);
+  useEffect(() => {
+    cb.current = onUpdate;
+  }, [onUpdate]);
+  useEffect(() => {
+    const cfg = XSTOCKS_PINNED[symbol];
+    if (!cfg) return;
+    let stop = false;
+    async function load() {
+      try {
+        const [dq, pq] = await Promise.all([
+          fetch(`/api/dexprice?mint=${cfg.mint}&decimals=${cfg.decimals}`),
+          fetch(`/api/pyth?symbol=${cfg.equity}`),
+        ]);
+        const dj = await dq.json();
+        const pj = await pq.json();
+        if (stop) return;
+        const dex = dj.live ? dj.price : null;
+        const und = pj.live ? pj.price : null;
+        cb.current(symbol, {
+          dexPrice: dex,
+          impactBps: dj.live ? (dj.impactBps ?? 0) : 0,
+          underlying: und,
+          divergenceBps:
+            dex !== null && und !== null && und > 0
+              ? Math.round((Math.abs(dex - und) / und) * 10000)
+              : null,
+          live: !!(dj.live && pj.live),
+        });
+      } catch {
+        if (!stop)
+          cb.current(symbol, { dexPrice: null, impactBps: 0, underlying: null, divergenceBps: null, live: false });
+      }
+    }
+    load();
+    const id = setInterval(load, 20_000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [symbol]);
+  return null;
+}
+
+interface Alert {
+  symbol: string;
+  text: string;
+}
+
 export default function Home() {
   const [marks, setMarks] = useState<{ rows: MarkRow[]; live: boolean; warning?: string; cachedAt?: number | null } | null>(null);
   const [selected, setSelected] = useState("OPENAI");
+  const [touched, setTouched] = useState(false);
   const [maxPremium, setMaxPremium] = useState<number>(loadMaxPremiumBps());
   const [ledger, setLedger] = useState<Attempt[]>([]);
   const [watch, setWatch] = useState<string[]>([]);
-  const [alerts, setAlerts] = useState<string[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [notified, setNotified] = useState<Set<string>>(new Set());
+  const [listed, setListed] = useState<Record<string, ListedState>>({});
 
-  // Listed leg (NVDAx): underlying reference + onchain probe
+  // Listed-leg flow + session state for the selected token
   const [underlying, setUnderlying] = useState<UnderlyingState | null>(null);
-  const [dexProbe, setDexProbe] = useState<{ price: number; impactBps: number } | null>(null);
   const [smartFlow, setSmartFlow] = useState<number | null>(null);
   const [freshFlow, setFreshFlow] = useState<number | null>(null);
-
-  const nvda = XSTOCKS_PINNED.NVDAx;
 
   useEffect(() => {
     setLedger(loadLedger());
@@ -69,36 +133,57 @@ export default function Home() {
     }
   }, []);
 
-  const loadDexProbe = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/dexprice?mint=${nvda.mint}&decimals=${nvda.decimals}`);
-      const j = await r.json();
-      if (j.live) setDexProbe({ price: j.price, impactBps: j.impactBps });
-      else setDexProbe(null);
-    } catch {
-      setDexProbe(null);
-    }
-  }, [nvda.mint, nvda.decimals]);
-
   useEffect(() => {
     loadMarks();
-    loadDexProbe();
-    const id = setInterval(() => {
-      loadMarks();
-      loadDexProbe();
-    }, 20_000);
+    const id = setInterval(loadMarks, 20_000);
     return () => clearInterval(id);
-  }, [loadMarks, loadDexProbe]);
+  }, [loadMarks]);
+
+  const onListedUpdate = useCallback((symbol: string, s: ListedState) => {
+    setListed((m) => (m[symbol]?.dexPrice === s.dexPrice && m[symbol]?.underlying === s.underlying && m[symbol]?.live === s.live ? m : { ...m, [symbol]: s }));
+  }, []);
+
+  const rows: MarkRow[] = useMemo(() => {
+    const base = marks?.rows ?? [];
+    const extra: MarkRow[] = [];
+    for (const [symbol, cfg] of Object.entries(XSTOCKS_PINNED)) {
+      const st = listed[symbol];
+      if (st?.dexPrice !== null && st?.dexPrice !== undefined && st?.underlying) {
+        extra.push({
+          symbol,
+          mint: cfg.mint,
+          markPrice: st.underlying,
+          tokenPrice: st.dexPrice,
+          premiumBps: Math.round(((st.dexPrice - st.underlying) / st.underlying) * 10000),
+          supply: 0,
+          image: "",
+        });
+      }
+    }
+    return [...base, ...extra];
+  }, [marks, listed]);
+
+  // Demo robustness: lead with the live max premium until the user takes over.
+  useEffect(() => {
+    if (!touched && rows.length > 0) {
+      const top = [...rows].sort((a, b) => b.premiumBps - a.premiumBps)[0];
+      if (top && top.symbol !== selected) setSelected(top.symbol);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, touched]);
 
   // Watchlist alerts: watched token back inside band.
   useEffect(() => {
-    if (!marks?.rows) return;
-    const fresh: string[] = [];
+    if (rows.length === 0) return;
+    const fresh: Alert[] = [];
     const nn = new Set(notified);
     for (const w of watch) {
-      const row = marks.rows.find((r) => r.symbol === w);
+      const row = rows.find((r) => r.symbol === w);
       if (row && row.premiumBps <= maxPremium && !nn.has(`${w}:${row.premiumBps}`)) {
-        fresh.push(`${w} back in band: ${row.premiumBps >= 0 ? "+" : ""}${(row.premiumBps / 100).toFixed(1)}% (mark $${row.markPrice.toFixed(2)})`);
+        fresh.push({
+          symbol: w,
+          text: `${w} back in band: ${row.premiumBps >= 0 ? "+" : ""}${(row.premiumBps / 100).toFixed(1)}% (fair $${row.markPrice.toFixed(2)})`,
+        });
         nn.add(`${w}:${row.premiumBps}`);
       }
     }
@@ -107,7 +192,7 @@ export default function Home() {
       setNotified(nn);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [marks, watch, maxPremium]);
+  }, [rows, watch, maxPremium]);
 
   const toggleWatch = (s: string) => {
     setWatch((w) => {
@@ -116,6 +201,15 @@ export default function Home() {
       return nw;
     });
   };
+
+  const onArmAlert = useCallback((s: string) => {
+    setWatch((w) => {
+      if (w.includes(s)) return w;
+      const nw = [...w, s];
+      localStorage.setItem(WATCH_KEY, JSON.stringify(nw));
+      return nw;
+    });
+  }, []);
 
   const onAttempt = useCallback((a: AttemptDraft) => {
     recordAttempt(a);
@@ -131,46 +225,44 @@ export default function Home() {
     }
   };
 
-  const divergenceBps =
-    dexProbe && underlying?.price
-      ? Math.round((Math.abs(dexProbe.price - underlying.price) / underlying.price) * 10000)
-      : null;
-
-  const rows: MarkRow[] = useMemo(() => {
-    const base = marks?.rows ?? [];
-    if (dexProbe && underlying?.price && underlying.price > 0) {
-      const prem = Math.round(((dexProbe.price - underlying.price) / underlying.price) * 10000);
-      return [
-        ...base,
-        { symbol: "NVDAx", mint: nvda.mint, markPrice: underlying.price, tokenPrice: dexProbe.price, premiumBps: prem, supply: 0, image: "" },
-      ];
-    }
-    return base;
-  }, [marks, dexProbe, underlying, nvda.mint]);
-
   const selRow = rows.find((r) => r.symbol === selected);
-  const isListed = selected === "NVDAx";
-  const sessionOpen = underlying?.isOpen;
-  const offHours = sessionOpen === null || sessionOpen === undefined ? isOffHoursET() : !sessionOpen;
+  const listedCfg = XSTOCKS_PINNED[selected];
+  const isListed = !!listedCfg;
+  const lst = isListed ? listed[selected] : undefined;
+  const sessionOpen = isListed ? underlying?.isOpen : undefined;
+  const offHours = isListed
+    ? sessionOpen === null || sessionOpen === undefined
+      ? isOffHoursET()
+      : !sessionOpen
+    : isOffHoursET();
 
   const guard: GuardInput | null = selRow
     ? {
         symbol: selRow.symbol,
         mint: selRow.mint,
+        decimals: listedCfg?.decimals ?? 6,
         dexPrice: selRow.tokenPrice,
         markPrice: selRow.markPrice,
-        marksLive: isListed ? !!(dexProbe && underlying?.live) : (marks?.live ?? false),
+        marksLive: isListed ? !!lst?.live : (marks?.live ?? false),
         maxPremiumBps: maxPremium,
-        divergenceBps: isListed ? divergenceBps : null,
-        referenceStale: isListed ? !(dexProbe && underlying?.live) : !(marks?.live ?? false),
+        divergenceBps: isListed ? (lst?.divergenceBps ?? null) : null,
+        referenceStale: isListed ? !lst?.live : !(marks?.live ?? false),
         smartFlow: isListed ? smartFlow : null,
         freshFlow: isListed ? freshFlow : null,
         offHours,
       }
     : null;
 
+  const select = (s: string) => {
+    setTouched(true);
+    setSelected(s);
+  };
+
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-6 space-y-4">
+      {Object.keys(XSTOCKS_PINNED).map((s) => (
+        <ListedQuoteReporter key={s} symbol={s} onUpdate={onListedUpdate} />
+      ))}
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
@@ -209,7 +301,9 @@ export default function Home() {
       {alerts.length > 0 && (
         <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-3 text-xs space-y-1">
           {alerts.map((a, i) => (
-            <div key={i} className="text-emerald-200">🔔 {a}</div>
+            <button key={i} onClick={() => select(a.symbol)} className="block text-left text-emerald-200 hover:underline">
+              🔔 {a.text} — tap to fill →
+            </button>
           ))}
         </div>
       )}
@@ -222,7 +316,7 @@ export default function Home() {
               live={marks.live}
               warning={marks.warning}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={select}
             />
           ) : (
             <div className="rounded-2xl border border-zinc-800 p-4 text-sm text-zinc-500">Loading marks…</div>
@@ -250,18 +344,22 @@ export default function Home() {
 
         <div className="space-y-4">
           {guard ? (
-            <GuardCard key={guard.symbol} g={guard} onAttempt={onAttempt} />
+            <GuardCard key={guard.symbol} g={guard} onAttempt={onAttempt} onArmAlert={onArmAlert} />
           ) : (
             <div className="rounded-2xl border border-zinc-800 p-4 text-sm text-zinc-500">Select a token…</div>
           )}
-          <PythBadge symbol="NVDA" onUpdate={setUnderlying} />
-          <FlowCard
-            mint={nvda.mint}
-            onFlows={(s, f) => {
-              setSmartFlow(s);
-              setFreshFlow(f);
-            }}
-          />
+          {isListed && listedCfg && (
+            <div key={selected} className="space-y-4">
+              <PythBadge symbol={listedCfg.equity} onUpdate={setUnderlying} />
+              <FlowCard
+                mint={listedCfg.mint}
+                onFlows={(s, f) => {
+                  setSmartFlow(s);
+                  setFreshFlow(f);
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
 

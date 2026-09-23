@@ -16,15 +16,18 @@
 
 FairBuy stands between your click and the loss. For every tokenized stock it shows three
 numbers — **DEX price, fair reference, premium** — and enforces an execution policy on top:
-hard-block absurd fills, require limits for elevated ones, TWAP thin books, and log everything
-(including the blocks) to a personal Overpay Ledger that tightens your rules as it learns.
+hard-block absurd fills, arm alerts for elevated ones, TWAP thin books in-band, and log
+everything (including the blocks) to a personal Overpay Ledger that tightens your rules
+as it learns. Covers 8 PreStocks pre-IPO tokens + NVDAx/AAPLx/TSLAx listed leg.
 
 ### Why
 
 Onchain equities removed the broker's protections but kept the broker's prices as an illusion:
 
 - **Invisible overpayment.** The OPENAI pre-IPO token traded at **+53% above its issuer mark**
-  (verified live). A $1,000 market-buy overpaid ~$350. No wallet, aggregator, or chart showed it.
+  at discovery (Sep 22), still +29% the next day — and NEURALINK sat at +27%. A $1,000
+  market-buy at the peak overpaid ~$350. No wallet, aggregator, or chart showed it.
+  The app always leads with the *live* highest premium, never a pinned story.
 - **Off-hours dislocation.** 63–68% of Solana equity volume prints while the underlying market
   is closed. Stale quotes, wide spreads, thin books — and nothing stops the click.
 - **No brokerage primitives.** No limit/stop discipline, no DCA-at-fair, no corporate-action
@@ -147,6 +150,8 @@ This product cannot exist anywhere else right now:
 
 **Program/API IDs:** USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` ·
 NVDAx `Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh` ·
+AAPLx `XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp` ·
+TSLAx `XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB` ·
 PreStocks mints in `src/lib/tokens.ts` · Pyth NVDA feed `b1073854ed24…`.
 
 ---
@@ -155,17 +160,17 @@ PreStocks mints in `src/lib/tokens.ts` · Pyth NVDA feed `b1073854ed24…`.
 
 | Time | Beat |
 |---|---|
-| 0:00 | Hook: "This $1,000 OPENAI buy overpays $350 and no wallet tells you." |
-| 0:20 | Problem, live: mark vs DEX side-by-side, +53% badge. |
-| 0:45 | First interaction: tap OPENAI, premium + verdict probabilities render. |
-| 1:15 | **Wow: hit Market Buy → BLOCKED**, receipt shows the math and the save. |
-| 1:45 | Technical proof: Fair-Limit set from mark band → Phantom sign → Explorer link, live. |
-| 2:15 | Second proof: NVDAx sharp-vs-crowd (top-PnL −$905k into +$10M fresh) + TWAP-at-fair. |
+| 0:00 | Hook: "This OPENAI buy overpays ~30% and no wallet tells you." (use the live max — app auto-leads with it.) |
+| 0:20 | Problem, live: mark vs DEX side-by-side, premium badge. |
+| 0:45 | First interaction: tap the top-premium token, premium + verdict probabilities render. |
+| 1:15 | **Wow: hit buy → BLOCKED** (or armed if converged), receipt shows the math and the save. |
+| 1:45 | Technical proof: arm alert @ fair → Phantom sign on an in-band fill → Explorer link, live. |
+| 2:15 | Second proof: NVDAx sharp-vs-crowd (top-PnL −$905k into +$10M fresh) + TWAP-at-fair with per-slice re-checks. |
 | 2:40 | Differentiation: "Dashboards show charts. We stand between your click and the loss." + ledger autopsy. |
 | 3:00 | Payoff: saved-$ receipt. "Every onchain broker needs this layer." |
 
-Deterministic backstops: pinned tickers (OPENAI overpay / SPACEX discount / KALSHI fair),
-cached-mode banner, rehearsed reject-path. Nothing in the demo depends on luck.
+Deterministic backstops: app auto-selects the live highest premium (OPENAI / NEURALINK at
+time of writing), pinned snapshot if APIs flake, cached-mode banner, rehearsed reject-path.
 
 ---
 

@@ -28,9 +28,11 @@ export const PRESTOCKS: StockToken[] = [
   { symbol: "SPACEX", name: "SpaceX PreStocks", kind: "preipo", mint: "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh", decimals: 6, image: "https://www.prestocks.com/logos/spacex.png" },
 ];
 
-/** Pinned xStock mints (verified). Others resolve via Jupiter token search at runtime. */
+/** Pinned xStock mints (verified: holder-count canonical + probe matches underlying). */
 export const XSTOCKS_PINNED: Record<string, { mint: string; decimals: number; name: string; equity: string }> = {
   NVDAx: { mint: "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh", decimals: 8, name: "NVIDIA xStock", equity: "NVDA" },
+  AAPLx: { mint: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp", decimals: 8, name: "Apple xStock", equity: "AAPL" },
+  TSLAx: { mint: "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB", decimals: 8, name: "Tesla xStock", equity: "TSLA" },
 };
 
 export const XSTOCKS_WATCH: string[] = ["NVDAx", "AAPLx", "TSLAx", "SPYx", "QQQx", "METAx", "AMZNx", "GOOGLx"];
