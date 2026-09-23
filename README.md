@@ -4,7 +4,7 @@ The stock market is open 24/7 onchain. Brokerage guardrails didn't come with it.
 FairBuy is the missing execution-safety layer: a fair reference beside every quote,
 a policy engine that **blocks** overpaying fills, and a ledger that learns your patterns.
 
-**Live demo:** _(deploy URL goes here before submission)_
+**Live demo:** https://fairbuy-stocklana.fly.dev/
 **Hackathon:** Stocklana (Main + PreStocks + Pyth) · deadline Sep 25 2026
 
 ## The 10-second pitch
