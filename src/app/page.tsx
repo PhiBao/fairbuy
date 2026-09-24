@@ -102,6 +102,8 @@ export default function Home() {
   const [marks, setMarks] = useState<{ rows: MarkRow[]; live: boolean; warning?: string; cachedAt?: number | null } | null>(null);
   const [selected, setSelected] = useState("OPENAI");
   const [touched, setTouched] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const guardRef = useRef<HTMLDivElement | null>(null);
   const [maxPremium, setMaxPremium] = useState<number>(loadMaxPremiumBps());
   const [ledger, setLedger] = useState<Attempt[]>([]);
   const [watch, setWatch] = useState<string[]>([]);
@@ -256,6 +258,17 @@ export default function Home() {
   const select = (s: string) => {
     setTouched(true);
     setSelected(s);
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 1400);
+    // If the guard card is off-screen (typical on phones), bring it to the user
+    // instead of making them hunt for it below the fold.
+    window.requestAnimationFrame(() => {
+      const el = guardRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const offscreen = r.top < 8 || r.bottom > window.innerHeight - 8;
+      if (offscreen) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   };
 
   return (
@@ -308,8 +321,8 @@ export default function Home() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <div className="lg:col-start-1 lg:row-start-1">
           {marks ? (
             <TokenBoard
               rows={rows}
@@ -321,45 +334,55 @@ export default function Home() {
           ) : (
             <div className="rounded-2xl border border-zinc-800 p-4 text-sm text-zinc-500">Loading marks…</div>
           )}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <h2 className="text-sm font-semibold tracking-wide text-zinc-300 mb-2">WATCHLIST · PREMIUM-DROP ALERTS</h2>
-            <div className="flex flex-wrap gap-1.5">
-              {rows.map((r) => (
-                <button
-                  key={r.symbol}
-                  onClick={() => toggleWatch(r.symbol)}
-                  className={`text-[11px] px-2 py-1 rounded-full border font-mono ${
-                    watch.includes(r.symbol)
-                      ? "border-emerald-400/60 text-emerald-200 bg-emerald-400/10"
-                      : "border-zinc-700 text-zinc-400"
-                  }`}
-                >
-                  {watch.includes(r.symbol) ? "★ " : "☆ "}{r.symbol}
-                </button>
-              ))}
-            </div>
-          </div>
-          <LedgerPanel ledger={ledger} autopsy={memoAutopsy} onApplyTighter={applyTighter} />
         </div>
 
-        <div className="space-y-4">
+        <div
+          ref={guardRef}
+          className={`scroll-mt-4 rounded-2xl transition-shadow duration-500 ${
+            flash ? "ring-2 ring-emerald-400/70 shadow-[0_0_40px_-8px] shadow-emerald-400/40" : ""
+          }`}
+        >
           {guard ? (
             <GuardCard key={guard.symbol} g={guard} onAttempt={onAttempt} onArmAlert={onArmAlert} />
           ) : (
             <div className="rounded-2xl border border-zinc-800 p-4 text-sm text-zinc-500">Select a token…</div>
           )}
-          {isListed && listedCfg && (
-            <div key={selected} className="space-y-4">
-              <PythBadge symbol={listedCfg.equity} onUpdate={setUnderlying} />
-              <FlowCard
-                mint={listedCfg.mint}
-                onFlows={(s, f) => {
-                  setSmartFlow(s);
-                  setFreshFlow(f);
-                }}
-              />
-            </div>
-          )}
+        </div>
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 lg:col-start-1 lg:row-start-2">
+          <h2 className="text-sm font-semibold tracking-wide text-zinc-300 mb-2">WATCHLIST · PREMIUM-DROP ALERTS</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {rows.map((r) => (
+              <button
+                key={r.symbol}
+                onClick={() => toggleWatch(r.symbol)}
+                className={`text-[11px] px-2 py-1 rounded-full border font-mono ${
+                  watch.includes(r.symbol)
+                    ? "border-emerald-400/60 text-emerald-200 bg-emerald-400/10"
+                    : "border-zinc-700 text-zinc-400"
+                }`}
+              >
+                {watch.includes(r.symbol) ? "★ " : "☆ "}{r.symbol}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {isListed && listedCfg && (
+          <div className="space-y-4 lg:col-start-2 lg:row-start-2" key={selected}>
+            <PythBadge symbol={listedCfg.equity} onUpdate={setUnderlying} />
+            <FlowCard
+              mint={listedCfg.mint}
+              onFlows={(s, f) => {
+                setSmartFlow(s);
+                setFreshFlow(f);
+              }}
+            />
+          </div>
+        )}
+
+        <div className="lg:col-start-1 lg:row-start-3">
+          <LedgerPanel ledger={ledger} autopsy={memoAutopsy} onApplyTighter={applyTighter} />
         </div>
       </div>
 

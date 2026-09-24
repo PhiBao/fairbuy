@@ -7,7 +7,7 @@ import { VersionedTransaction } from "@solana/web3.js";
 import { evaluatePolicy, fairLimitPrice, premiumBps as calcPremium } from "@/lib/policy";
 import type { Verdict } from "@/lib/verdict";
 import { USDC_MINT } from "@/lib/tokens";
-import { explorerTxUrl } from "@/lib/solana";
+import { explorerTxUrl, describeSendError, sendRawWithFallback } from "@/lib/solana";
 
 export interface GuardInput {
   symbol: string;
@@ -57,7 +57,7 @@ export default function GuardCard({
   onArmAlert: (symbol: string) => void;
 }) {
   const { connection } = useConnection();
-  const { publicKey, signTransaction, connected } = useWallet();
+  const { publicKey, signTransaction, sendTransaction, connected } = useWallet();
   const [amountUsd, setAmountUsd] = useState(100);
   const [quote, setQuote] = useState<{ outAmount: string; priceImpactBps: number; raw: unknown } | null>(null);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
@@ -199,9 +199,26 @@ export default function GuardCard({
       if (sj.error) throw new Error(`swap build failed: ${String(sj.detail ?? sj.error).slice(0, 160)}`);
       const bytes = Uint8Array.from(atob(sj.swapTransaction as string), (c) => c.charCodeAt(0));
       const tx = VersionedTransaction.deserialize(bytes);
-      const signed = await signTransaction(tx);
-      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-      await connection.confirmTransaction(sig, "confirmed");
+
+      // Preferred path: the wallet signs AND broadcasts through its own RPC.
+      // Falls back to local signing + multi-endpoint broadcast if unsupported.
+      let sig: string;
+      try {
+        sig = await sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
+      } catch {
+        if (!signTransaction) throw new Error("Wallet cannot sign transactions.");
+        const signed = await signTransaction(tx);
+        sig = await sendRawWithFallback(signed.serialize());
+      }
+
+      // The tx is already on-chain at this point. A failed status poll is NOT a
+      // failed trade, so it must never render as one.
+      let confirmed = true;
+      try {
+        await connection.confirmTransaction(sig, "confirmed");
+      } catch {
+        confirmed = false;
+      }
       const done: AttemptDraft = {
         symbol: g.symbol,
         amountUsd,
@@ -215,9 +232,13 @@ export default function GuardCard({
       };
       onAttempt(done);
       setReceipt({ ...done, fairPrice });
-      setStatus("✓ Filled at the live quote — receipt verified on Solana.");
+      setStatus(
+        confirmed
+          ? "✓ Filled — receipt verified on Solana."
+          : "✓ Submitted — confirmation still pending. The transaction is live; verify on Explorer."
+      );
     } catch (e) {
-      setStatus(`Execution failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}`);
+      setStatus(`Execution failed: ${describeSendError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -282,9 +303,15 @@ export default function GuardCard({
         const sj = await sw.json();
         if (sj.error) throw new Error(`slice ${i + 1} build failed`);
         const bytes = Uint8Array.from(atob(sj.swapTransaction as string), (c) => c.charCodeAt(0));
-        const signed = await signTransaction(VersionedTransaction.deserialize(bytes));
-        const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-        await connection.confirmTransaction(sig, "confirmed");
+        const sliceTx = VersionedTransaction.deserialize(bytes);
+        let sig: string;
+        try {
+          sig = await sendTransaction(sliceTx, connection, { skipPreflight: false, maxRetries: 3 });
+        } catch {
+          if (!signTransaction) throw new Error("Wallet cannot sign transactions.");
+          const signed = await signTransaction(sliceTx);
+          sig = await sendRawWithFallback(signed.serialize());
+        }
         filled++;
         lastSig = sig;
         onAttempt({
