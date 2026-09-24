@@ -77,8 +77,24 @@ export default function LedgerPanel({
       {ledger.length > 0 && (
         <div className="mt-3 space-y-1 max-h-40 overflow-auto">
           {ledger.slice(0, 8).map((a) => (
-            <div key={a.id} className="text-[11px] font-mono text-zinc-500 flex justify-between">
-              <span>{new Date(a.ts).toLocaleTimeString()} · {a.symbol} · {a.decision} · +{(a.premiumBps / 100).toFixed(1)}%</span>
+            <div key={a.id} className="text-[11px] font-mono text-zinc-500 flex justify-between gap-2">
+              <span>
+                {new Date(a.ts).toLocaleTimeString()} · {a.symbol} · {a.decision} · +{(a.premiumBps / 100).toFixed(1)}%
+                {a.status && a.status !== "submitted" && (
+                  <span
+                    className={
+                      a.status === "confirmed"
+                        ? " text-emerald-400"
+                        : a.status === "failed"
+                          ? " text-red-400"
+                          : " text-zinc-600"
+                    }
+                  >
+                    {" "}
+                    {a.status === "confirmed" ? "✓ filled" : a.status === "failed" ? "✗ failed on-chain" : "? unverified"}
+                  </span>
+                )}
+              </span>
               {a.txSig && (
                 <a className="text-emerald-400 underline" href={explorerTxUrl(a.txSig)} target="_blank" rel="noreferrer">
                   tx↗

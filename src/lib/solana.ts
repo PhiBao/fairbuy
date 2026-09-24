@@ -44,6 +44,60 @@ export function explorerTxUrl(sig: string): string {
   return `https://explorer.solana.com/tx/${sig}?cluster=mainnet`;
 }
 
+export type TxState = "confirmed" | "failed" | "pending" | "unknown";
+
+/** Endpoints used for status polling. Public RPCs rate-limit browsers hard, so
+ *  a single-endpoint confirm() throws and we would wrongly report "pending"
+ *  for a transaction that already failed (or already confirmed). */
+const STATUS_RPCS = [
+  rpcUrl(),
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+  "https://solana.drpc.org",
+  "https://solana.api.onfinality.io/public",
+];
+
+export interface TxStatus {
+  state: TxState;
+  err: unknown;
+  slot: number | null;
+}
+
+/** Non-blocking-friendly status poll: rotates endpoints, never throws. */
+export async function awaitTxStatus(sig: string, timeoutMs = 40_000): Promise<TxStatus> {
+  const deadline = Date.now() + timeoutMs;
+  let i = 0;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    const url = STATUS_RPCS[i++ % STATUS_RPCS.length];
+    try {
+      const c = new Connection(url, "confirmed");
+      const res = await c.getSignatureStatuses([sig], { searchTransactionHistory: true });
+      const v = res.value[0];
+      if (v) {
+        if (v.err) return { state: "failed", err: v.err, slot: v.slot ?? null };
+        const conf = v.confirmations;
+        if (v.confirmationStatus === "confirmed" || v.confirmationStatus === "finalized" || (conf != null && conf > 0))
+          return { state: "confirmed", err: null, slot: v.slot ?? null };
+        return { state: "pending", err: null, slot: v.slot ?? null };
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  return { state: lastErr ? "unknown" : "pending", err: lastErr, slot: null };
+}
+
+export function describeChainError(err: unknown): string {
+  const s = typeof err === "string" ? err : JSON.stringify(err ?? "");
+  if (/6001|0x1771/i.test(s))
+    return "slippage exceeded — the book moved past your tolerance before it filled";
+  if (/InsufficientLamports|insufficient/i.test(s)) return "not enough SOL for fees";
+  if (/0x1\b/.test(s)) return "ins funds";
+  return s.slice(0, 120);
+}
+
 export function explorerTokenUrl(mint: string): string {
   return `https://explorer.solana.com/address/${mint}?cluster=mainnet`;
 }

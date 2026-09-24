@@ -7,7 +7,7 @@ import { VersionedTransaction } from "@solana/web3.js";
 import { evaluatePolicy, fairLimitPrice, premiumBps as calcPremium } from "@/lib/policy";
 import type { Verdict } from "@/lib/verdict";
 import { USDC_MINT } from "@/lib/tokens";
-import { explorerTxUrl, describeSendError, sendRawWithFallback } from "@/lib/solana";
+import { explorerTxUrl, describeSendError, sendRawWithFallback, awaitTxStatus, describeChainError } from "@/lib/solana";
 
 export interface GuardInput {
   symbol: string;
@@ -34,6 +34,7 @@ export interface AttemptDraft {
   txSig?: string;
   savedUsd: number;
   offHours: boolean;
+  status?: "submitted" | "confirmed" | "failed" | "unknown";
 }
 
 interface Receipt extends AttemptDraft {
@@ -51,10 +52,12 @@ export default function GuardCard({
   g,
   onAttempt,
   onArmAlert,
+  onStatus,
 }: {
   g: GuardInput;
-  onAttempt: (a: AttemptDraft) => void;
+  onAttempt: (a: AttemptDraft) => string;
   onArmAlert: (symbol: string) => void;
+  onStatus: (id: string, state: "confirmed" | "failed" | "pending" | "unknown", err: unknown) => void;
 }) {
   const { connection } = useConnection();
   const { publicKey, signTransaction, sendTransaction, connected } = useWallet();
@@ -66,7 +69,7 @@ export default function GuardCard({
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [twapN, setTwapN] = useState(3);
-  const [slipBps, setSlipBps] = useState(100);
+  const [slipBps, setSlipBps] = useState(300);
   const [armed, setArmed] = useState(false);
 
   const premium = useMemo(
@@ -220,14 +223,8 @@ export default function GuardCard({
         sig = await sendRawWithFallback(signed.serialize());
       }
 
-      // The tx is already on-chain at this point. A failed status poll is NOT a
-      // failed trade, so it must never render as one.
-      let confirmed = true;
-      try {
-        await connection.confirmTransaction(sig, "confirmed");
-      } catch {
-        confirmed = false;
-      }
+      // The tx is on-chain. Never block the UI on a status poll that the public
+      // RPC may refuse: show the receipt now, resolve the outcome in background.
       const done: AttemptDraft = {
         symbol: g.symbol,
         amountUsd,
@@ -238,14 +235,22 @@ export default function GuardCard({
         txSig: sig,
         savedUsd: 0,
         offHours: g.offHours,
+        status: "submitted",
       };
-      onAttempt(done);
+      const attemptId = onAttempt(done);
       setReceipt({ ...done, fairPrice });
-      setStatus(
-        confirmed
-          ? "✓ Filled — receipt verified on Solana."
-          : "✓ Submitted — confirmation still pending. The transaction is live; verify on Explorer."
-      );
+      setStatus("⏳ Submitted — confirming on Solana…");
+
+      void awaitTxStatus(sig).then(({ state, err }) => {
+        onStatus(attemptId, state, err);
+        if (state === "confirmed")
+          setStatus("✓ Filled and confirmed on Solana. Receipt below.");
+        else if (state === "failed")
+          setStatus(`✗ Failed on-chain: ${describeChainError(err)}. Only gas was spent — no tokens swapped.`);
+        else if (state === "unknown")
+          setStatus("⚠ Submitted — status unverified (public RPC limits). Verify on the Explorer link.");
+        else setStatus("⏳ Submitted — still confirming. This book is thin; give it a moment.");
+      });
     } catch (e) {
       setStatus(`Execution failed: ${describeSendError(e)}`);
     } finally {
@@ -436,7 +441,7 @@ export default function GuardCard({
         </span>
         <span className="text-[11px] text-zinc-500">max slippage</span>
         <div className="flex gap-1">
-          {[50, 100, 200, 300].map((b) => (
+          {[50, 100, 300, 500].map((b) => (
             <button
               key={b}
               onClick={() => setSlipBps(b)}

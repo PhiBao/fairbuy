@@ -16,6 +16,8 @@ export interface Attempt {
   txSig?: string;
   savedUsd: number;
   offHours: boolean;
+  /** on-chain outcome, filled in once the status poll resolves */
+  status?: "submitted" | "confirmed" | "failed" | "unknown";
 }
 
 const KEY = "fairbuy-ledger-v1";
@@ -41,6 +43,12 @@ export function recordAttempt(a: Omit<Attempt, "id" | "ts">): Attempt {
     localStorage.setItem(KEY, JSON.stringify([full, ...cur].slice(0, 200)));
   }
   return full;
+}
+
+export function updateAttemptStatus(id: string, status: Attempt["status"]): void {
+  if (typeof window === "undefined") return;
+  const cur = loadLedger().map((a) => (a.id === id ? { ...a, status } : a));
+  localStorage.setItem(KEY, JSON.stringify(cur));
 }
 
 export function loadMaxPremiumBps(): number {

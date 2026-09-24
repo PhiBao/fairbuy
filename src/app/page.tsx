@@ -13,6 +13,7 @@ import {
   loadMaxPremiumBps,
   recordAttempt,
   saveMaxPremiumBps,
+  updateAttemptStatus,
   type Attempt,
 } from "@/lib/ledger";
 
@@ -214,9 +215,18 @@ export default function Home() {
   }, []);
 
   const onAttempt = useCallback((a: AttemptDraft) => {
-    recordAttempt(a);
+    const rec = recordAttempt(a);
     setLedger(loadLedger());
+    return rec.id;
   }, []);
+
+  const onStatus = useCallback(
+    (id: string, state: "confirmed" | "failed" | "pending" | "unknown") => {
+      updateAttemptStatus(id, state === "pending" ? "unknown" : state);
+      setLedger(loadLedger());
+    },
+    []
+  );
 
   const memoAutopsy = useMemo(() => autopsy(ledger, maxPremium), [ledger, maxPremium]);
 
@@ -343,7 +353,7 @@ export default function Home() {
           }`}
         >
           {guard ? (
-            <GuardCard key={guard.symbol} g={guard} onAttempt={onAttempt} onArmAlert={onArmAlert} />
+            <GuardCard key={guard.symbol} g={guard} onAttempt={onAttempt} onArmAlert={onArmAlert} onStatus={onStatus} />
           ) : (
             <div className="rounded-2xl border border-zinc-800 p-4 text-sm text-zinc-500">Select a token…</div>
           )}
