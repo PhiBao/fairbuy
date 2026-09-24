@@ -400,9 +400,7 @@ export default function GuardCard({
         </span>
       </div>
 
-      {!connected ? (
-        <WalletMultiButton />
-      ) : outOfBand ? (
+      {outOfBand ? (
         <div className="flex flex-col gap-2">
           <button
             onClick={armAlert}
@@ -411,9 +409,16 @@ export default function GuardCard({
             {armed ? `✓ Alert armed — flag me @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})` : `Arm alert @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})`}
           </button>
           <p className="text-[11px] text-zinc-500">
-            {blocked ? "Market buy is blocked this far outside your band." : "Premium is outside your band — no fill, no pretense."} FairBuy watches; you decide when it returns.
+            {blocked ? "Market buy is blocked this far outside your band." : "Premium is outside your band — no fill, no pretense."} FairBuy watches; you decide when it returns. No wallet needed to arm.
           </p>
+          {!connected && (
+            <div className="pt-1">
+              <WalletMultiButton />
+            </div>
+          )}
         </div>
+      ) : !connected ? (
+        <WalletMultiButton />
       ) : (
         <div className="flex flex-col sm:flex-row gap-2">
           <button
