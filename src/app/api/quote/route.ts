@@ -6,7 +6,7 @@ export async function GET(req: Request) {
   const inputMint = url.searchParams.get("inputMint");
   const outputMint = url.searchParams.get("outputMint");
   const amount = url.searchParams.get("amount");
-  const slippageBps = url.searchParams.get("slippageBps") ?? "50";
+  const slippageBps = url.searchParams.get("slippageBps") ?? "100";
   if (!inputMint || !outputMint || !amount) {
     return Response.json({ error: "inputMint, outputMint, amount required" }, { status: 400 });
   }

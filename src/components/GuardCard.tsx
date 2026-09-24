@@ -66,6 +66,7 @@ export default function GuardCard({
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [twapN, setTwapN] = useState(3);
+  const [slipBps, setSlipBps] = useState(100);
   const [armed, setArmed] = useState(false);
 
   const premium = useMemo(
@@ -84,7 +85,7 @@ export default function GuardCard({
     (async () => {
       try {
         const r = await fetch(
-          `/api/quote?inputMint=${USDC_MINT}&outputMint=${g.mint}&amount=${usdcUnits}&slippageBps=50`
+          `/api/quote?inputMint=${USDC_MINT}&outputMint=${g.mint}&amount=${usdcUnits}&slippageBps=${slipBps}`
         );
         const j = await r.json();
         if (stop) return;
@@ -100,7 +101,7 @@ export default function GuardCard({
     return () => {
       stop = true;
     };
-  }, [g.mint, g.dexPrice, amountUsd]);
+  }, [g.mint, g.dexPrice, amountUsd, slipBps]);
 
   const impactBps = quote?.priceImpactBps ?? 0;
 
@@ -190,10 +191,18 @@ export default function GuardCard({
     }
     setBusy(true);
     try {
+      // Re-quote at execution time with the user's slippage tolerance: the
+      // on-chain threshold is baked into the quote, so a stale quote is the
+      // #1 cause of a signed tx that dies at the last instruction.
+      const fresh = await fetch(
+        `/api/quote?inputMint=${USDC_MINT}&outputMint=${g.mint}&amount=${Math.floor(amountUsd * 1e6)}&slippageBps=${slipBps}`
+      );
+      const fj = await fresh.json();
+      if (fj.error || !fj.quote) throw new Error(`No route right now: ${String(fj.detail ?? fj.error ?? "thin book").slice(0, 120)}`);
       const sw = await fetch("/api/swap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quoteResponse: quote.raw, userPublicKey: publicKey.toBase58() }),
+        body: JSON.stringify({ quoteResponse: fj.quote, userPublicKey: publicKey.toBase58() }),
       });
       const sj = await sw.json();
       if (sj.error) throw new Error(`swap build failed: ${String(sj.detail ?? sj.error).slice(0, 160)}`);
@@ -275,7 +284,7 @@ export default function GuardCard({
       for (let i = 0; i < n; i++) {
         const sliceUsd = amountUsd / n;
         const qr = await fetch(
-          `/api/quote?inputMint=${USDC_MINT}&outputMint=${g.mint}&amount=${Math.floor(sliceUsd * 1e6)}&slippageBps=50`
+          `/api/quote?inputMint=${USDC_MINT}&outputMint=${g.mint}&amount=${Math.floor(sliceUsd * 1e6)}&slippageBps=${slipBps}`
         );
         const qj = await qr.json();
         if (qj.error) {
@@ -413,7 +422,7 @@ export default function GuardCard({
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <label className="text-xs text-zinc-400">USDC</label>
         <input
           type="number"
@@ -425,7 +434,29 @@ export default function GuardCard({
         <span className="text-[11px] text-zinc-500 font-mono">
           impact {quote ? `${(impactBps / 100).toFixed(2)}%` : "…"}
         </span>
+        <span className="text-[11px] text-zinc-500">max slippage</span>
+        <div className="flex gap-1">
+          {[50, 100, 200, 300].map((b) => (
+            <button
+              key={b}
+              onClick={() => setSlipBps(b)}
+              className={`text-[11px] px-1.5 py-0.5 rounded border font-mono ${
+                slipBps === b
+                  ? "border-emerald-400/60 text-emerald-200 bg-emerald-400/10"
+                  : "border-zinc-700 text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {(b / 100).toFixed(b < 100 ? 1 : 0)}%
+            </button>
+          ))}
+        </div>
       </div>
+      {quote && impactBps * 2 > slipBps && (
+        <p className="text-[11px] text-amber-300 mb-2">
+          ⚠ Quote impact {(impactBps / 100).toFixed(2)}% is close to your slippage ceiling — a signed fill can still
+          fail on-chain. Widen tolerance or use TWAP {Math.min(10, Math.max(2, Math.floor(twapN)))}× below.
+        </p>
+      )}
 
       {outOfBand ? (
         <div className="flex flex-col gap-2">
