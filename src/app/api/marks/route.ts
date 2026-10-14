@@ -11,9 +11,38 @@ interface MarkRow {
   supply: number;
   image: string;
 }
-
 const TTL_MS = 15_000;
 let cache: { ts: number; rows: MarkRow[] } | null = null;
+
+/** Drop rows the guard could never price, and never emit NaN (JSON turns NaN
+ *  into null, which used to crash the board with `null.toFixed()`). */
+function sanitize(
+  raw: Array<{ symbol?: unknown; contract_address?: unknown; markPrice?: unknown; tokenPrice?: unknown; supply?: unknown; image?: unknown }>
+): { rows: MarkRow[]; skipped: number } {
+  const rows: MarkRow[] = [];
+  let skipped = 0;
+  for (const t of raw ?? []) {
+    const mark = Number(t?.markPrice);
+    const dex = Number(t?.tokenPrice);
+    const sym = typeof t?.symbol === "string" ? t.symbol : "";
+    const mint = typeof t?.contract_address === "string" ? t.contract_address : "";
+    if (!sym || mint.length < 20 || !Number.isFinite(mark) || mark <= 0 || !Number.isFinite(dex) || dex <= 0) {
+      skipped++;
+      continue;
+    }
+    const p = premiumBps(dex, mark);
+    rows.push({
+      symbol: sym,
+      mint,
+      markPrice: mark,
+      tokenPrice: dex,
+      premiumBps: Number.isFinite(p) ? Math.round(p) : 0,
+      supply: Number.isFinite(Number(t?.supply)) ? Number(t.supply) : 0,
+      image: typeof t?.image === "string" ? t.image : "",
+    });
+  }
+  return { rows, skipped };
+}
 
 // Verified snapshot 2026-09-22 — served only when live API is unreachable.
 const PINNED: MarkRow[] = [
@@ -38,24 +67,17 @@ export async function GET() {
     });
     if (!r.ok) throw new Error(`prestocks ${r.status}`);
     const raw = (await r.json()) as Array<{
-      symbol: string;
-      contract_address: string;
-      markPrice: number;
-      tokenPrice: number;
-      supply: number;
-      image?: string;
+      symbol?: unknown;
+      contract_address?: unknown;
+      markPrice?: unknown;
+      tokenPrice?: unknown;
+      supply?: unknown;
+      image?: unknown;
     }>;
-    const rows: MarkRow[] = raw.map((t) => ({
-      symbol: t.symbol,
-      mint: t.contract_address,
-      markPrice: t.markPrice,
-      tokenPrice: t.tokenPrice,
-      premiumBps: Math.round(premiumBps(t.tokenPrice, t.markPrice)),
-      supply: t.supply,
-      image: t.image ?? "",
-    }));
+    const { rows, skipped } = sanitize(raw);
+    if (rows.length === 0) throw new Error("no usable rows");
     cache = { ts: Date.now(), rows };
-    return Response.json({ rows, live: true, cachedAt: cache.ts });
+    return Response.json({ rows, live: true, cachedAt: cache.ts, skipped });
   } catch {
     const rows = cache?.rows ?? PINNED;
     return Response.json({

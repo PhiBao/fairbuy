@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import type { FlowSnapshot } from "@/app/api/flows/route";
+import { isNum } from "@/lib/fmt";
 
-function fmtUsd(v: number | null): string {
-  if (v === null) return "—";
+function fmtUsd(v: number | null | undefined): string {
+  if (!isNum(v)) return "—";
   const a = Math.abs(v);
   const sign = v < 0 ? "−" : "+";
   if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(1)}M`;
@@ -42,8 +43,8 @@ export default function FlowCard({
 
   if (!s) return <div className="text-xs text-zinc-500">Flows: loading…</div>;
 
-  const sharpNegative = (s.smartTraderNetFlowUsd ?? 0) < 0 || (s.topPnlNetFlowUsd ?? 0) < 0;
-  const crowdPositive = (s.freshNetFlowUsd ?? 0) > 0;
+  const sharpNegative = (isNum(s.smartTraderNetFlowUsd) && s.smartTraderNetFlowUsd < 0) || (isNum(s.topPnlNetFlowUsd) && s.topPnlNetFlowUsd < 0);
+  const crowdPositive = isNum(s.freshNetFlowUsd) && s.freshNetFlowUsd > 0;
   const divergence = s.live && sharpNegative && crowdPositive;
 
   return (

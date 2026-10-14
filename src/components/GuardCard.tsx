@@ -8,6 +8,7 @@ import { evaluatePolicy, fairLimitPrice, premiumBps as calcPremium } from "@/lib
 import type { Verdict } from "@/lib/verdict";
 import { USDC_MINT } from "@/lib/tokens";
 import { explorerTxUrl, describeSendError, sendRawWithFallback, awaitTxStatus, describeChainError } from "@/lib/solana";
+import { bps, num } from "@/lib/fmt";
 
 export interface GuardInput {
   symbol: string;
@@ -305,7 +306,7 @@ export default function GuardCard({
         const premNow = Math.round(calcPremium(implied, g.markPrice));
         if (!isFinite(premNow) || premNow > g.maxPremiumBps) {
           setStatus(
-            `Slice ${i + 1}/${n}: fresh quote implies +${(premNow / 100).toFixed(1)}% — outside band, TWAP halted after ${filled} fills.`
+            `Slice ${i + 1}/${n}: fresh quote implies ${bps(premNow)} — outside band, TWAP halted after ${filled} fills.`
           );
           break;
         }
@@ -339,7 +340,7 @@ export default function GuardCard({
           savedUsd: 0,
           offHours: g.offHours,
         });
-        setStatus(`TWAP: slice ${filled}/${n} filled @ $${implied.toFixed(2)}…`);
+        setStatus(`TWAP: slice ${filled}/${n} filled @ $${num(implied)}…`);
       }
       setStatus(`TWAP done: ${filled}/${n} slices filled inside the band. Each fill logged to the ledger.`);
       if (lastSig)
@@ -361,7 +362,7 @@ export default function GuardCard({
         <h2 className="text-sm font-semibold tracking-wide text-zinc-300">GUARDED BUY · {g.symbol}</h2>
         {verdict && (
           <span className="text-[11px] px-2 py-0.5 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-300">
-            {OPTION_LABEL[verdict.choice]} · {(verdict.chaseRisk * 100).toFixed(0)}% chase-risk
+            {OPTION_LABEL[verdict.choice]} · {num((verdict.chaseRisk ?? 0) * 100, 0)}% chase-risk
             {verdict.source === "jev" ? " · Jev" : " · offline"}
           </span>
         )}
@@ -370,16 +371,16 @@ export default function GuardCard({
       <div className="grid grid-cols-3 gap-2 text-xs font-mono mb-3">
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
           <div className="text-zinc-500 text-[10px]">DEX</div>
-          <div>${g.dexPrice.toFixed(2)}</div>
+          <div>${num(g.dexPrice)}</div>
         </div>
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
           <div className="text-zinc-500 text-[10px]">FAIR {g.markPrice !== null ? "" : "(n/a)"}</div>
-          <div>{g.markPrice !== null ? `$${g.markPrice.toFixed(2)}` : "—"}</div>
+          <div>${num(g.markPrice)}</div>
         </div>
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
           <div className="text-zinc-500 text-[10px]">PREMIUM</div>
           <div className={isFinite(premium) && premium > 0 ? "text-red-300" : "text-emerald-300"}>
-            {isFinite(premium) ? `${premium >= 0 ? "+" : ""}${(premium / 100).toFixed(1)}%` : "—"}
+            {bps(premium)}
           </div>
         </div>
       </div>
@@ -390,8 +391,8 @@ export default function GuardCard({
             {(Object.entries(verdict.options) as Array<[Verdict["choice"], number]>).map(([k, p]) => (
               <div
                 key={k}
-                title={`${OPTION_LABEL[k]} ${(p * 100).toFixed(0)}%`}
-                style={{ width: `${Math.round(p * 100)}%` }}
+                title={`${OPTION_LABEL[k]} ${num((p ?? 0) * 100, 0)}%`}
+                style={{ width: `${Math.max(0, Math.min(100, Math.round((p ?? 0) * 100)))}%` }}
                 className={
                   k === "buy_now"
                     ? "bg-emerald-500"
@@ -406,7 +407,7 @@ export default function GuardCard({
           </div>
           <div className="mt-1 text-[10px] text-zinc-500 font-mono">
             {(Object.entries(verdict.options) as Array<[Verdict["choice"], number]>)
-              .map(([k, p]) => `${OPTION_LABEL[k]} ${(p * 100).toFixed(0)}%`)
+              .map(([k, p]) => `${OPTION_LABEL[k]} ${num((p ?? 0) * 100, 0)}%`)
               .join(" · ")}
             {" · "}entry quality {verdict.entryQuality}/100
           </div>
@@ -422,8 +423,8 @@ export default function GuardCard({
 
       {blocked && isFinite(premium) && premium > 0 && (
         <div className="mb-3 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm">
-          ⛔ This ${amountUsd} buy would overpay <b>${savedEst.toFixed(0)}</b> vs fair. Blocked.
-          {fairPrice !== null && <span className="text-zinc-300"> Fair re-entry: <b className="font-mono">${fairPrice.toFixed(2)}</b></span>}
+          ⛔ This ${amountUsd} buy would overpay <b>${num(savedEst, 0)}</b> vs fair. Blocked.
+          {fairPrice !== null && <span className="text-zinc-300"> Fair re-entry: <b className="font-mono">${num(fairPrice)}</b></span>}
         </div>
       )}
 
@@ -437,7 +438,7 @@ export default function GuardCard({
           className="w-28 rounded-lg bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-sm font-mono"
         />
         <span className="text-[11px] text-zinc-500 font-mono">
-          impact {quote ? `${(impactBps / 100).toFixed(2)}%` : "…"}
+          impact {quote ? `${num(impactBps / 100)}%` : "…"}
         </span>
         <span className="text-[11px] text-zinc-500">max slippage</span>
         <div className="flex gap-1">
@@ -458,7 +459,7 @@ export default function GuardCard({
       </div>
       {quote && impactBps * 2 > slipBps && (
         <p className="text-[11px] text-amber-300 mb-2">
-          ⚠ Quote impact {(impactBps / 100).toFixed(2)}% is close to your slippage ceiling — a signed fill can still
+          ⚠ Quote impact {num(impactBps / 100)}% is close to your slippage ceiling — a signed fill can still
           fail on-chain. Widen tolerance or use TWAP {Math.min(10, Math.max(2, Math.floor(twapN)))}× below.
         </p>
       )}
@@ -469,7 +470,7 @@ export default function GuardCard({
             onClick={armAlert}
             className="w-full rounded-xl py-2.5 text-sm font-semibold bg-amber-400/10 border border-amber-400/40 text-amber-200 hover:bg-amber-400/20"
           >
-            {armed ? `✓ Alert armed — flag me @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})` : `Arm alert @ fair (${fairPrice !== null ? `$${fairPrice.toFixed(2)}` : "—"})`}
+            {armed ? `✓ Alert armed — flag me @ fair (${fairPrice !== null ? `$${num(fairPrice)}` : "—"})` : `Arm alert @ fair (${fairPrice !== null ? `$${num(fairPrice)}` : "—"})`}
           </button>
           <p className="text-[11px] text-zinc-500">
             {blocked ? "Market buy is blocked this far outside your band." : "Premium is outside your band — no fill, no pretense."} FairBuy watches; you decide when it returns. No wallet needed to arm.
@@ -489,7 +490,7 @@ export default function GuardCard({
             onClick={executeMarket}
             className="flex-1 rounded-xl py-2.5 text-sm font-semibold bg-emerald-400/15 border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/25 disabled:opacity-40"
           >
-            {busy ? "Signing…" : `Buy now @ live quote ($${g.dexPrice.toFixed(2)})`}
+            {busy ? "Signing…" : `Buy now @ live quote ($${num(g.dexPrice)})`}
           </button>
         </div>
       )}

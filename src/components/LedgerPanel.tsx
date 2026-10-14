@@ -3,6 +3,7 @@
 import type { Autopsy } from "@/lib/ledger";
 import { explorerTxUrl } from "@/lib/solana";
 import type { Attempt } from "@/lib/ledger";
+import { bps, isNum, num } from "@/lib/fmt";
 
 function downloadCsv(ledger: Attempt[]) {
   const head = "time,symbol,amount_usd,dex_price,mark_price,premium_bps,decision,tx, est_saved_usd";
@@ -16,7 +17,7 @@ function downloadCsv(ledger: Attempt[]) {
       a.premiumBps,
       a.decision,
       a.txSig ?? "",
-      (a.savedUsd ?? 0).toFixed(2),
+      num(a.savedUsd ?? 0),
     ].join(",")
   );
   const blob = new Blob([[head, ...lines].join("\n")], { type: "text/csv" });
@@ -57,7 +58,7 @@ export default function LedgerPanel({
           <div className="text-[10px] text-zinc-500">blocked</div>
         </div>
         <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-2">
-          <div className="text-lg font-bold font-mono text-emerald-300">${autopsy.totalSavedUsd.toFixed(0)}</div>
+          <div className="text-lg font-bold font-mono text-emerald-300">${num(autopsy.totalSavedUsd, 0)}</div>
           <div className="text-[10px] text-zinc-500">est. saved</div>
         </div>
       </div>
@@ -71,7 +72,7 @@ export default function LedgerPanel({
           onClick={onApplyTighter}
           className="mt-2 w-full text-xs font-semibold rounded-xl bg-amber-400/15 border border-amber-400/40 text-amber-200 py-2 hover:bg-amber-400/25"
         >
-          Apply tighter band (+{(autopsy.suggestedMaxPremiumBps / 100).toFixed(0)}%) — the ledger learned
+          Apply tighter band (+{num((autopsy.suggestedMaxPremiumBps ?? 0) / 100, 0)}%) — the ledger learned
         </button>
       )}
       {ledger.length > 0 && (
@@ -79,7 +80,7 @@ export default function LedgerPanel({
           {ledger.slice(0, 8).map((a) => (
             <div key={a.id} className="text-[11px] font-mono text-zinc-500 flex justify-between gap-2">
               <span>
-                {new Date(a.ts).toLocaleTimeString()} · {a.symbol} · {a.decision} · +{(a.premiumBps / 100).toFixed(1)}%
+                {new Date(a.ts).toLocaleTimeString()} · {a.symbol} · {a.decision} · {bps(a.premiumBps)}
                 {a.status && a.status !== "submitted" && (
                   <span
                     className={

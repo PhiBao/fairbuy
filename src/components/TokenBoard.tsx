@@ -1,16 +1,19 @@
 "use client";
 
+import { bps, isNum, num } from "@/lib/fmt";
+
 export interface MarkRow {
   symbol: string;
   mint: string;
-  markPrice: number;
-  tokenPrice: number;
-  premiumBps: number;
+  markPrice: number | null;
+  tokenPrice: number | null;
+  premiumBps: number | null;
   supply: number;
   image: string;
 }
 
-function badgeClass(premiumBps: number): string {
+function badgeClass(premiumBps: number | null): string {
+  if (!isNum(premiumBps)) return "bg-zinc-500/15 text-zinc-300 border-zinc-500/40";
   if (premiumBps > 2000) return "bg-red-500/15 text-red-300 border-red-500/40";
   if (premiumBps > 1000) return "bg-orange-500/15 text-orange-300 border-orange-500/40";
   if (premiumBps > 0) return "bg-yellow-500/15 text-yellow-300 border-yellow-500/40";
@@ -58,11 +61,11 @@ export default function TokenBoard({
             <div className="flex items-center justify-between">
               <span className="font-semibold text-sm">{r.symbol}</span>
               <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${badgeClass(r.premiumBps)}`}>
-                {fmtPremium(r.premiumBps)}
+                {bps(r.premiumBps)}
               </span>
             </div>
             <div className="mt-1.5 text-xs text-zinc-400 font-mono">
-              mark ${r.markPrice.toFixed(2)} · dex ${r.tokenPrice.toFixed(2)}
+              mark ${num(r.markPrice)} · dex ${num(r.tokenPrice)}
             </div>
           </button>
         ))}

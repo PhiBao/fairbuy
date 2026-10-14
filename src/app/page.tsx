@@ -7,6 +7,8 @@ import PythBadge, { type UnderlyingState } from "@/components/PythBadge";
 import FlowCard from "@/components/FlowCard";
 import LedgerPanel from "@/components/LedgerPanel";
 import { XSTOCKS_PINNED } from "@/lib/tokens";
+import { isNum } from "@/lib/fmt";
+import { bps, num } from "@/lib/fmt";
 import {
   autopsy,
   loadLedger,
@@ -147,11 +149,13 @@ export default function Home() {
   }, []);
 
   const rows: MarkRow[] = useMemo(() => {
-    const base = marks?.rows ?? [];
+    const base = (marks?.rows ?? []).filter(
+      (r) => isNum(r.markPrice) && isNum(r.tokenPrice) && isNum(r.premiumBps)
+    );
     const extra: MarkRow[] = [];
     for (const [symbol, cfg] of Object.entries(XSTOCKS_PINNED)) {
       const st = listed[symbol];
-      if (st?.dexPrice !== null && st?.dexPrice !== undefined && st?.underlying) {
+      if (isNum(st?.dexPrice) && isNum(st?.underlying) && st.underlying > 0) {
         extra.push({
           symbol,
           mint: cfg.mint,
@@ -169,7 +173,7 @@ export default function Home() {
   // Demo robustness: lead with the live max premium until the user takes over.
   useEffect(() => {
     if (!touched && rows.length > 0) {
-      const top = [...rows].sort((a, b) => b.premiumBps - a.premiumBps)[0];
+      const top = [...rows].sort((a, b) => (b.premiumBps ?? -Infinity) - (a.premiumBps ?? -Infinity))[0];
       if (top && top.symbol !== selected) setSelected(top.symbol);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -182,10 +186,10 @@ export default function Home() {
     const nn = new Set(notified);
     for (const w of watch) {
       const row = rows.find((r) => r.symbol === w);
-      if (row && row.premiumBps <= maxPremium && !nn.has(`${w}:${row.premiumBps}`)) {
+      if (row && isNum(row.premiumBps) && isNum(row.markPrice) && row.premiumBps <= maxPremium && !nn.has(`${w}:${row.premiumBps}`)) {
         fresh.push({
           symbol: w,
-          text: `${w} back in band: ${row.premiumBps >= 0 ? "+" : ""}${(row.premiumBps / 100).toFixed(1)}% (fair $${row.markPrice.toFixed(2)})`,
+          text: `${w} back in band: ${bps(row.premiumBps)} (fair $${num(row.markPrice)})`,
         });
         nn.add(`${w}:${row.premiumBps}`);
       }
@@ -248,13 +252,14 @@ export default function Home() {
       : !sessionOpen
     : isOffHoursET();
 
-  const guard: GuardInput | null = selRow
-    ? {
-        symbol: selRow.symbol,
-        mint: selRow.mint,
-        decimals: listedCfg?.decimals ?? 6,
-        dexPrice: selRow.tokenPrice,
-        markPrice: selRow.markPrice,
+  const guard: GuardInput | null =
+    selRow && isNum(selRow.tokenPrice) && (selRow.markPrice === null || isNum(selRow.markPrice))
+      ? {
+          symbol: selRow.symbol,
+          mint: selRow.mint,
+          decimals: listedCfg?.decimals ?? 6,
+          dexPrice: selRow.tokenPrice,
+          markPrice: selRow.markPrice,
         marksLive: isListed ? !!lst?.live : (marks?.live ?? false),
         maxPremiumBps: maxPremium,
         divergenceBps: isListed ? (lst?.divergenceBps ?? null) : null,
@@ -263,7 +268,7 @@ export default function Home() {
         freshFlow: isListed ? freshFlow : null,
         offHours,
       }
-    : null;
+      : null;
 
   const select = (s: string) => {
     setTouched(true);
